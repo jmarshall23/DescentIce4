@@ -1028,7 +1028,7 @@ idPlayer::idPlayer() {
 	weapon_soulcube			= -1;
 	weapon_pda				= -1;
 	weapon_fists			= -1;
-	showWeaponViewModel		= true;
+	showWeaponViewModel		= false;
 
 	skin					= NULL;
 	powerUpSkin				= NULL;
@@ -1205,7 +1205,7 @@ void idPlayer::Init( void ) {
 	weapon_soulcube			= SlotForWeapon( "weapon_soulcube" );
 	weapon_pda				= SlotForWeapon( "weapon_pda" );
 	weapon_fists			= SlotForWeapon( "weapon_fists" );
-	showWeaponViewModel		= GetUserInfo()->GetBool( "ui_showGun" );
+	showWeaponViewModel = false; // GetUserInfo()->GetBool("ui_showGun");
 
 
 	lastDmgTime				= 0;
@@ -2405,7 +2405,7 @@ bool idPlayer::UserInfoChanged( bool canModify ) {
 	bool	newready;
 
 	userInfo = GetUserInfo();
-	showWeaponViewModel = userInfo->GetBool( "ui_showGun" );
+	showWeaponViewModel = false; // userInfo->GetBool("ui_showGun");
 
 	if ( !gameLocal.isMultiplayer ) {
 		return false;
@@ -4060,7 +4060,7 @@ void idPlayer::UpdateWeapon( void ) {
 	}
 
 	// update weapon state, particles, dlights, etc
-	weapon.GetEntity()->PresentWeapon( showWeaponViewModel );
+	weapon.GetEntity()->PresentWeapon( false );
 }
 
 /*
@@ -4835,12 +4835,15 @@ idPlayer::UpdateDeltaViewAngles
 ================
 */
 void idPlayer::UpdateDeltaViewAngles( const idAngles &angles ) {
-	// set the delta angle
+	// Set the delta angle
 	idAngles delta;
-	for( int i = 0; i < 3; i++ ) {
-		delta[ i ] = angles[ i ] - SHORT2ANGLE( usercmd.angles[ i ] );
+	for (int i = 0; i < 3; i++) {
+		// Normalize the incoming angle and the current user command angle before computing delta
+		float normalizedCurrent = idMath::AngleNormalize360(SHORT2ANGLE(usercmd.angles[i]));
+		float normalizedTarget = idMath::AngleNormalize360(angles[i]);
+		delta[i] = idMath::AngleNormalize180(normalizedTarget - normalizedCurrent);
 	}
-	SetDeltaViewAngles( delta );
+	SetDeltaViewAngles(delta);
 }
 
 /*
@@ -4869,48 +4872,13 @@ void idPlayer::UpdateViewAngles( void ) {
 		return;
 	}
 
-	// if dead
-	if ( health <= 0 ) {
-		if ( pm_thirdPersonDeath.GetBool() ) {
-			viewAngles.roll = 0.0f;
-			viewAngles.pitch = 30.0f;
-		} else {
-			viewAngles.roll = 40.0f;
-			viewAngles.pitch = -15.0f;
-		}
-		return;
-	}
-
 	// circularly clamp the angles with deltas
-	for ( i = 0; i < 3; i++ ) {
-		cmdAngles[i] = SHORT2ANGLE( usercmd.angles[i] );
-		if ( influenceActive == INFLUENCE_LEVEL3 ) {
-			viewAngles[i] += idMath::ClampFloat( -1.0f, 1.0f, idMath::AngleDelta( idMath::AngleNormalize180( SHORT2ANGLE( usercmd.angles[i]) + deltaViewAngles[i] ) , viewAngles[i] ) );
-		} else {
-			viewAngles[i] = idMath::AngleNormalize180( SHORT2ANGLE( usercmd.angles[i]) + deltaViewAngles[i] );
-		}
+	for (int i = 0; i < 3; i++) {
+		cmdAngles[i] = idMath::AngleNormalize360(SHORT2ANGLE(usercmd.angles[i]));
+		viewAngles[i] = idMath::AngleNormalize180(cmdAngles[i] + deltaViewAngles[i]);
 	}
 	if ( !centerView.IsDone( gameLocal.time ) ) {
 		viewAngles.pitch = centerView.GetCurrentValue(gameLocal.time);
-	}
-
-	// clamp the pitch
-	if ( noclip ) {
-		if ( viewAngles.pitch > 89.0f ) {
-			// don't let the player look down more than 89 degrees while noclipping
-			viewAngles.pitch = 89.0f;
-		} else if ( viewAngles.pitch < -89.0f ) {
-			// don't let the player look up more than 89 degrees while noclipping
-			viewAngles.pitch = -89.0f;
-		}
-	} else {
-		if ( viewAngles.pitch > pm_maxviewpitch.GetFloat() ) {
-			// don't let the player look down enough to see the shadow of his (non-existant) feet
-			viewAngles.pitch = pm_maxviewpitch.GetFloat();
-		} else if ( viewAngles.pitch < pm_minviewpitch.GetFloat() ) {
-			// don't let the player look up more than 89 degrees
-			viewAngles.pitch = pm_minviewpitch.GetFloat();
-		}
 	}
 
 	UpdateDeltaViewAngles( viewAngles );
@@ -5934,29 +5902,15 @@ void idPlayer::Move( void ) {
 	physicsObj.SetMaxStepHeight( pm_stepsize.GetFloat() );
 	physicsObj.SetMaxJumpHeight( pm_jumpheight.GetFloat() );
 
-	if ( noclip ) {
-		physicsObj.SetContents( 0 );
-		physicsObj.SetMovementType( PM_NOCLIP );
-	} else if ( spectating ) {
-		physicsObj.SetContents( 0 );
-		physicsObj.SetMovementType( PM_SPECTATOR );
-	} else if ( health <= 0 ) {
-		physicsObj.SetContents( CONTENTS_CORPSE | CONTENTS_MONSTERCLIP );
-		physicsObj.SetMovementType( PM_DEAD );
-	} else if ( gameLocal.inCinematic || gameLocal.GetCamera() || privateCameraView || ( influenceActive == INFLUENCE_LEVEL2 ) ) {
-		physicsObj.SetContents( CONTENTS_BODY );
-		physicsObj.SetMovementType( PM_FREEZE );
-	} else {
-		physicsObj.SetContents( CONTENTS_BODY );
-		physicsObj.SetMovementType( PM_NORMAL );
+	if (health > 0) {
+		physicsObj.SetContents(CONTENTS_BODY);
+		physicsObj.SetMovementType(PM_SPECTATOR);
+		physicsObj.SetClipMask(MASK_PLAYERSOLID);
 	}
-
-	if ( spectating ) {
-		physicsObj.SetClipMask( MASK_DEADSOLID );
-	} else if ( health <= 0 ) {
-		physicsObj.SetClipMask( MASK_DEADSOLID );
-	} else {
-		physicsObj.SetClipMask( MASK_PLAYERSOLID );
+	else {
+		physicsObj.SetContents(0);
+		physicsObj.SetMovementType(PM_NOCLIP);
+		physicsObj.SetClipMask(MASK_DEADSOLID);
 	}
 
 	physicsObj.SetDebugLevel( g_debugMove.GetBool() );
@@ -5969,74 +5923,12 @@ void idPlayer::Move( void ) {
 	// update our last valid AAS location for the AI
 	SetAASLocation();
 
-	if ( spectating ) {
-		newEyeOffset = 0.0f;
-	} else if ( health <= 0 ) {
-		newEyeOffset = pm_deadviewheight.GetFloat();
-	} else if ( physicsObj.IsCrouching() ) {
-		newEyeOffset = pm_crouchviewheight.GetFloat();
-	} else if ( GetBindMaster() && GetBindMaster()->IsType( idAFEntity_Vehicle::Type ) ) {
-		newEyeOffset = 0.0f;
-	} else {
-		newEyeOffset = pm_normalviewheight.GetFloat();
-	}
+	newEyeOffset = 0.0f;
 
-	if ( EyeHeight() != newEyeOffset ) {
-		if ( spectating ) {
-			SetEyeHeight( newEyeOffset );
-		} else {
-			// smooth out duck height changes
-			SetEyeHeight( EyeHeight() * pm_crouchrate.GetFloat() + newEyeOffset * ( 1.0f - pm_crouchrate.GetFloat() ) );
-		}
-	}
-
-	if ( noclip || gameLocal.inCinematic || ( influenceActive == INFLUENCE_LEVEL2 ) ) {
-		AI_CROUCH	= false;
-		AI_ONGROUND	= ( influenceActive == INFLUENCE_LEVEL2 );
-		AI_ONLADDER	= false;
-		AI_JUMP		= false;
-	} else {
-		AI_CROUCH	= physicsObj.IsCrouching();
-		AI_ONGROUND	= physicsObj.HasGroundContacts();
-		AI_ONLADDER	= physicsObj.OnLadder();
-		AI_JUMP		= physicsObj.HasJumped();
-
-		// check if we're standing on top of a monster and give a push if we are
-		idEntity *groundEnt = physicsObj.GetGroundEntity();
-		if ( groundEnt && groundEnt->IsType( idAI::Type ) ) {
-			idVec3 vel = physicsObj.GetLinearVelocity();
-			if ( vel.ToVec2().LengthSqr() < 0.1f ) {
-				vel.ToVec2() = physicsObj.GetOrigin().ToVec2() - groundEnt->GetPhysics()->GetAbsBounds().GetCenter().ToVec2();
-				vel.ToVec2().NormalizeFast();
-				vel.ToVec2() *= pm_walkspeed.GetFloat();
-			} else {
-				// give em a push in the direction they're going
-				vel *= 1.1f;
-			}
-			physicsObj.SetLinearVelocity( vel );
-		}
-	}
-
-	if ( AI_JUMP ) {
-		// bounce the view weapon
- 		loggedAccel_t	*acc = &loggedAccel[currentLoggedAccel&(NUM_LOGGED_ACCELS-1)];
-		currentLoggedAccel++;
-		acc->time = gameLocal.time;
-		acc->dir[2] = 200;
-		acc->dir[0] = acc->dir[1] = 0;
-	}
-
-	if ( AI_ONLADDER ) {
-		int old_rung = oldOrigin.z / LADDER_RUNG_DISTANCE;
-		int new_rung = physicsObj.GetOrigin().z / LADDER_RUNG_DISTANCE;
-
-		if ( old_rung != new_rung ) {
-			StartSound( "snd_stepladder", SND_CHANNEL_ANY, 0, false, NULL );
-		}
-	}
-
-	BobCycle( pushVelocity );
-	CrashLand( oldOrigin, oldVelocity );
+	AI_CROUCH = physicsObj.IsCrouching();
+	AI_ONGROUND = false; // physicsObj.HasGroundContacts();
+	AI_ONLADDER = false; // physicsObj.OnLadder();
+	AI_JUMP = physicsObj.HasJumped();
 }
 
 /*
